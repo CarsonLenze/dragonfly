@@ -133,7 +133,7 @@ func (s *Session) sendRecipes() {
 				RecipeID:        uuid.New().String(),
 				Priority:        int32(i.Priority()),
 				Input:           stacksToIngredientItems(s.br, i.Input()),
-				Output:          stacksToRecipeStacks(s.br, i.Output()),
+				Output:          stacksToRecipeStacks(s.br, i.Output(), s.conf.UseBlockNetworkIDHashes),
 				Block:           i.Block(),
 				RecipeNetworkID: networkID,
 			})
@@ -142,7 +142,7 @@ func (s *Session) sendRecipes() {
 				RecipeID:        uuid.New().String(),
 				Priority:        int32(i.Priority()),
 				Input:           stacksToIngredientItems(s.br, i.Input()),
-				Output:          stacksToRecipeStacks(s.br, i.Output()),
+				Output:          stacksToRecipeStacks(s.br, i.Output(), s.conf.UseBlockNetworkIDHashes),
 				Block:           i.Block(),
 				RecipeNetworkID: networkID,
 			}})
@@ -158,13 +158,13 @@ func (s *Session) sendRecipes() {
 				Width:           int32(i.Shape().Width()),
 				Height:          int32(i.Shape().Height()),
 				Input:           stacksToIngredientItems(s.br, i.Input()),
-				Output:          stacksToRecipeStacks(s.br, i.Output()),
+				Output:          stacksToRecipeStacks(s.br, i.Output(), s.conf.UseBlockNetworkIDHashes),
 				Block:           i.Block(),
 				AssumeSymmetry:  true,
 				RecipeNetworkID: networkID,
 			})
 		case recipe.SmithingTransform:
-			input, output := stacksToIngredientItems(s.br, i.Input()), stacksToRecipeStacks(s.br, i.Output())
+			input, output := stacksToIngredientItems(s.br, i.Input()), stacksToRecipeStacks(s.br, i.Output(), s.conf.UseBlockNetworkIDHashes)
 			smithingTransformRecipes = append(smithingTransformRecipes, protocol.SmithingTransformRecipe{
 				RecipeID:        uuid.New().String(),
 				Base:            input[0],
@@ -261,7 +261,7 @@ func (s *Session) sendInv(inv *inventory.Inventory, windowID uint32) {
 		Content:  make([]protocol.ItemInstance, 0, inv.Size()),
 	}
 	for _, i := range inv.Slots() {
-		pk.Content = append(pk.Content, instanceFromItem(s.br, i))
+		pk.Content = append(pk.Content, instanceFromItem(s.br, i, s.conf.UseBlockNetworkIDHashes))
 	}
 	s.writePacket(pk)
 }
@@ -271,7 +271,7 @@ func (s *Session) sendItem(item item.Stack, slot int, windowID uint32) {
 	s.writePacket(&packet.InventorySlot{
 		WindowID: windowID,
 		Slot:     uint32(slot),
-		NewItem:  instanceFromItem(s.br, item),
+		NewItem:  instanceFromItem(s.br, item, s.conf.UseBlockNetworkIDHashes),
 	})
 }
 
@@ -683,7 +683,7 @@ func (s *Session) broadcastOffHandFunc(tx *world.Tx, c Controllable) inventory.S
 			i, _ := s.offHand.Item(0)
 			s.writePacket(&packet.InventoryContent{
 				WindowID: protocol.WindowIDOffHand,
-				Content:  []protocol.ItemInstance{instanceFromItem(s.br, i)},
+				Content:  []protocol.ItemInstance{instanceFromItem(s.br, i, s.conf.UseBlockNetworkIDHashes)},
 			})
 		}
 	}
@@ -731,7 +731,7 @@ func (s *Session) SendHeldSlot(slot int, c Controllable, force bool) {
 	mainHand, _ := c.HeldItems()
 	s.writePacket(&packet.MobEquipment{
 		EntityRuntimeID: selfEntityRuntimeID,
-		NewItem:         instanceFromItem(s.br, mainHand),
+		NewItem:         instanceFromItem(s.br, mainHand, s.conf.UseBlockNetworkIDHashes),
 		InventorySlot:   byte(slot),
 		HotBarSlot:      byte(slot),
 	})
@@ -998,14 +998,14 @@ func valueOrDefault[T comparable](v, def T) T {
 }
 
 // stackFromItem converts an item.Stack to its network ItemStack representation.
-func stackFromItem(br world.BlockRegistry, it item.Stack) protocol.ItemStack {
+func stackFromItem(br world.BlockRegistry, it item.Stack, useBlockHashes bool) protocol.ItemStack {
 	if it.Empty() {
 		return protocol.ItemStack{}
 	}
 
 	var blockRuntimeID uint32
 	if b, ok := it.Item().(world.Block); ok {
-		blockRuntimeID = br.BlockRuntimeID(b)
+		blockRuntimeID = blockNetworkID(br, b, useBlockHashes)
 	}
 
 	rid, meta, _ := world.ItemRuntimeID(it.Item())
@@ -1022,17 +1022,17 @@ func stackFromItem(br world.BlockRegistry, it item.Stack) protocol.ItemStack {
 }
 
 // stackToItem converts a network ItemStack representation back to an item.Stack.
-func stackToItem(br world.BlockRegistry, it protocol.ItemStack) item.Stack {
+func stackToItem(br world.BlockRegistry, it protocol.ItemStack, useBlockHashes bool) item.Stack {
 	t, ok := world.ItemByRuntimeID(it.NetworkID, int16(it.MetadataValue))
 	if !ok {
 		t = block.Air{}
 	}
-	if it.BlockRuntimeID > 0 {
-		// It shouldn't matter if it (for whatever reason) wasn't able to get the block runtime ID,
-		// since on the next line, we assert that the block is an item. If it didn't succeed, it'll
-		// return air anyway.
-		b, _ := br.BlockByRuntimeID(uint32(it.BlockRuntimeID))
-		if t, ok = b.(world.Item); !ok {
+	if it.BlockRuntimeID != 0 {
+		if b, found := blockFromNetworkID(br, uint32(it.BlockRuntimeID), useBlockHashes); found {
+			if t, ok = b.(world.Item); !ok {
+				t = block.Air{}
+			}
+		} else {
 			t = block.Air{}
 		}
 	}
@@ -1044,19 +1044,44 @@ func stackToItem(br world.BlockRegistry, it protocol.ItemStack) item.Stack {
 	return item.ReadNBT(it.NBTData, &s)
 }
 
+// blockNetworkID returns the registry-local runtime ID of b, or its canonical network hash if useBlockHashes is true.
+func blockNetworkID(br world.BlockRegistry, b world.Block, useBlockHashes bool) uint32 {
+	rid := br.BlockRuntimeID(b)
+	if !useBlockHashes {
+		return rid
+	}
+	hash, ok := br.RuntimeIDToHash(rid)
+	if !ok {
+		panic(fmt.Sprintf("cannot find network hash for block runtime ID %d", rid))
+	}
+	return hash
+}
+
+// blockFromNetworkID resolves a network block ID to a block using the mode advertised in StartGame.
+func blockFromNetworkID(br world.BlockRegistry, id uint32, useBlockHashes bool) (world.Block, bool) {
+	if useBlockHashes {
+		var ok bool
+		id, ok = br.HashToRuntimeID(id)
+		if !ok {
+			return nil, false
+		}
+	}
+	return br.BlockByRuntimeID(id)
+}
+
 // instanceFromItem converts an item.Stack to its network ItemInstance representation.
-func instanceFromItem(br world.BlockRegistry, it item.Stack) protocol.ItemInstance {
+func instanceFromItem(br world.BlockRegistry, it item.Stack, useBlockHashes bool) protocol.ItemInstance {
 	return protocol.ItemInstance{
 		StackNetworkID: item_id(it),
-		Stack:          stackFromItem(br, it),
+		Stack:          stackFromItem(br, it, useBlockHashes),
 	}
 }
 
 // stacksToRecipeStacks converts a list of item.Stacks to their protocol representation with damage stripped for recipes.
-func stacksToRecipeStacks(br world.BlockRegistry, inputs []item.Stack) []protocol.ItemStack {
+func stacksToRecipeStacks(br world.BlockRegistry, inputs []item.Stack, useBlockHashes bool) []protocol.ItemStack {
 	items := make([]protocol.ItemStack, 0, len(inputs))
 	for _, i := range inputs {
-		items = append(items, deleteDamage(stackFromItem(br, i)))
+		items = append(items, deleteDamage(stackFromItem(br, i, useBlockHashes)))
 	}
 	return items
 }
@@ -1092,13 +1117,13 @@ func stacksToIngredientItems(_ world.BlockRegistry, inputs []recipe.Item) []prot
 }
 
 // creativeContent returns all creative groups, and creative inventory items as protocol item stacks.
-func creativeContent(br world.BlockRegistry) ([]protocol.CreativeGroup, []protocol.CreativeItem) {
+func creativeContent(br world.BlockRegistry, useBlockHashes bool) ([]protocol.CreativeGroup, []protocol.CreativeItem) {
 	groups := make([]protocol.CreativeGroup, 0, len(creative.Groups()))
 	for _, group := range creative.Groups() {
 		groups = append(groups, protocol.CreativeGroup{
 			Category: group.Category.Uint8(),
 			Name:     group.Name,
-			Icon:     deleteDamage(stackFromItem(br, group.Icon)),
+			Icon:     deleteDamage(stackFromItem(br, group.Icon, useBlockHashes)),
 		})
 	}
 
@@ -1112,7 +1137,7 @@ func creativeContent(br world.BlockRegistry) ([]protocol.CreativeGroup, []protoc
 		}
 		it = append(it, protocol.CreativeItem{
 			CreativeItemNetworkID: uint32(index) + 1,
-			Item:                  deleteDamage(stackFromItem(br, i.Stack)),
+			Item:                  deleteDamage(stackFromItem(br, i.Stack, useBlockHashes)),
 			GroupIndex:            uint32(group),
 		})
 	}

@@ -129,6 +129,9 @@ type Config struct {
 	// For a non-default registry, set this to world.NewBlockRegistry(), register blocks on that instance, and ensure
 	// it is finalized before use.
 	Blocks world.BlockRegistry
+	// UseBlockNetworkIDHashes specifies whether canonical block state hashes should be used as block network IDs.
+	// If false, the default, registry-local sequential runtime IDs are used as before.
+	UseBlockNetworkIDHashes bool
 }
 
 // New creates a Server using fields of conf. The Server's worlds are created
@@ -220,6 +223,9 @@ type UserConfig struct {
 		// Address is the address on which the server should listen. Players may
 		// connect to this address in order to join.
 		Address string
+		// UseBlockNetworkIDHashes specifies whether canonical block state hashes should be used as block network IDs.
+		// If false, the default, sequential runtime IDs are used.
+		UseBlockNetworkIDHashes bool
 	}
 	Server struct {
 		// Name is the name of the server as it shows up in the server list.
@@ -286,6 +292,7 @@ func (uc UserConfig) Config(log *slog.Logger) (Config, error) {
 		ResourcesRequired:       uc.Resources.Required,
 		AuthDisabled:            !uc.Server.AuthEnabled,
 		MuteEmoteChat:           uc.Server.MuteEmoteChat,
+		UseBlockNetworkIDHashes: uc.Network.UseBlockNetworkIDHashes,
 		MaxPlayers:              uc.Players.MaxCount,
 		MaxChunkRadius:          uc.Players.MaximumChunkRadius,
 		DisableResourceBuilding: !uc.Resources.AutoBuildPack,
