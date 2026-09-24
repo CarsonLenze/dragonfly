@@ -125,16 +125,16 @@ func (s *Session) ViewEntity(e world.Entity) {
 			s.writePacket(&packet.AddItemActor{
 				EntityUniqueID:  int64(runtimeID),
 				EntityRuntimeID: runtimeID,
-				Item:            instanceFromItem(s.br, v.Behaviour().(*entity.ItemBehaviour).Item()),
+				Item:            instanceFromItem(s.br, v.Behaviour().(*entity.ItemBehaviour).Item(), s.conf.UseBlockNetworkIDHashes),
 				Position:        vec64To32(v.Position()),
 				Velocity:        vec64To32(v.Velocity()),
 				EntityMetadata:  metadata,
 			})
 			return
 		case entity.TextType:
-			metadata[protocol.EntityDataKeyVariant] = int32(s.br.BlockRuntimeID(block.Air{}))
+			metadata[protocol.EntityDataKeyVariant] = int32(blockNetworkID(s.br, block.Air{}, s.conf.UseBlockNetworkIDHashes))
 		case entity.FallingBlockType:
-			metadata[protocol.EntityDataKeyVariant] = int32(s.br.BlockRuntimeID(v.Behaviour().(*entity.FallingBlockBehaviour).Block()))
+			metadata[protocol.EntityDataKeyVariant] = int32(blockNetworkID(s.br, v.Behaviour().(*entity.FallingBlockBehaviour).Block(), s.conf.UseBlockNetworkIDHashes))
 		}
 	}
 	if v, ok := e.H().Type().(NetworkEncodeableEntity); ok {
@@ -310,12 +310,12 @@ func (s *Session) ViewEntityItems(e world.Entity) {
 	// Show the main hand item.
 	s.writePacket(&packet.MobEquipment{
 		EntityRuntimeID: runtimeID,
-		NewItem:         instanceFromItem(s.br, mainHand),
+		NewItem:         instanceFromItem(s.br, mainHand, s.conf.UseBlockNetworkIDHashes),
 	})
 	// Show the off-hand item.
 	s.writePacket(&packet.MobEquipment{
 		EntityRuntimeID: runtimeID,
-		NewItem:         instanceFromItem(s.br, offHand),
+		NewItem:         instanceFromItem(s.br, offHand, s.conf.UseBlockNetworkIDHashes),
 		WindowID:        protocol.WindowIDOffHand,
 	})
 }
@@ -342,10 +342,10 @@ func (s *Session) ViewEntityArmour(e world.Entity) {
 	// Show the entity's armour
 	s.writePacket(&packet.MobArmourEquipment{
 		EntityRuntimeID: runtimeID,
-		Helmet:          instanceFromItem(s.br, inv.Helmet()),
-		Chestplate:      instanceFromItem(s.br, inv.Chestplate()),
-		Leggings:        instanceFromItem(s.br, inv.Leggings()),
-		Boots:           instanceFromItem(s.br, inv.Boots()),
+		Helmet:          instanceFromItem(s.br, inv.Helmet(), s.conf.UseBlockNetworkIDHashes),
+		Chestplate:      instanceFromItem(s.br, inv.Chestplate(), s.conf.UseBlockNetworkIDHashes),
+		Leggings:        instanceFromItem(s.br, inv.Leggings(), s.conf.UseBlockNetworkIDHashes),
+		Boots:           instanceFromItem(s.br, inv.Boots(), s.conf.UseBlockNetworkIDHashes),
 	})
 }
 
@@ -421,13 +421,20 @@ func (s *Session) ViewParticle(pos mgl64.Vec3, p world.Particle) {
 		s.writePacket(&packet.LevelEvent{
 			EventType: packet.LevelEventParticlesDestroyBlock,
 			Position:  vec64To32(pos),
-			EventData: int32(s.br.BlockRuntimeID(pa.Block)),
+			EventData: int32(blockNetworkID(s.br, pa.Block, s.conf.UseBlockNetworkIDHashes)),
 		})
 	case particle.PunchBlock:
+		eventType := int32(packet.LevelEventParticlesCrackBlock)
+		blockID := blockNetworkID(s.br, pa.Block, s.conf.UseBlockNetworkIDHashes)
+		if s.conf.UseBlockNetworkIDHashes {
+			eventType = packet.LevelEventParticlesCrackBlockDown + int32(pa.Face)
+		} else {
+			blockID |= uint32(pa.Face) << 24
+		}
 		s.writePacket(&packet.LevelEvent{
-			EventType: packet.LevelEventParticlesCrackBlock,
+			EventType: eventType,
 			Position:  vec64To32(pos),
-			EventData: int32(s.br.BlockRuntimeID(pa.Block)) | (int32(pa.Face) << 24),
+			EventData: int32(blockID),
 		})
 	case particle.EndermanTeleport:
 		s.writePacket(&packet.LevelEvent{
@@ -701,21 +708,21 @@ func (s *Session) playSound(pos mgl64.Vec3, t world.Sound, disableRelative bool)
 	case sound.Burp:
 		pk.SoundType = packet.SoundEventBurp
 	case sound.DoorOpen:
-		pk.SoundType, pk.ExtraData = packet.SoundEventDoorOpen, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventDoorOpen, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.DoorClose:
-		pk.SoundType, pk.ExtraData = packet.SoundEventDoorClose, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventDoorClose, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.TrapdoorOpen:
-		pk.SoundType, pk.ExtraData = packet.SoundEventTrapdoorOpen, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventTrapdoorOpen, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.TrapdoorClose:
-		pk.SoundType, pk.ExtraData = packet.SoundEventTrapdoorClose, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventTrapdoorClose, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.FenceGateOpen:
-		pk.SoundType, pk.ExtraData = packet.SoundEventFenceGateOpen, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventFenceGateOpen, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.FenceGateClose:
-		pk.SoundType, pk.ExtraData = packet.SoundEventFenceGateClose, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventFenceGateClose, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.Deny:
 		pk.SoundType = packet.SoundEventDeny
 	case sound.BlockPlace:
-		pk.SoundType, pk.ExtraData = packet.SoundEventPlace, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventPlace, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.AnvilLand:
 		s.writePacket(&packet.LevelEvent{
 			EventType: packet.LevelEventSoundAnvilLand,
@@ -747,11 +754,11 @@ func (s *Session) playSound(pos mgl64.Vec3, t world.Sound, disableRelative bool)
 	case sound.BarrelOpen:
 		pk.SoundType = packet.SoundEventBarrelOpen
 	case sound.BlockBreaking:
-		pk.SoundType, pk.ExtraData = packet.SoundEventHit, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventHit, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.ItemBreak:
 		pk.SoundType = packet.SoundEventBreak
 	case sound.ItemUseOn:
-		pk.SoundType, pk.ExtraData = packet.SoundEventItemUseOn, int32(s.br.BlockRuntimeID(so.Block))
+		pk.SoundType, pk.ExtraData = packet.SoundEventItemUseOn, int32(blockNetworkID(s.br, so.Block, s.conf.UseBlockNetworkIDHashes))
 	case sound.Fizz:
 		pk.SoundType = packet.SoundEventFizz
 	case sound.GlassBreak:
@@ -1006,7 +1013,7 @@ func (s *Session) ViewBlockUpdate(pos cube.Pos, b world.Block, layer int) {
 	blockPos := protocol.BlockPos{int32(pos[0]), int32(pos[1]), int32(pos[2])}
 	s.writePacket(&packet.UpdateBlock{
 		Position:          blockPos,
-		NewBlockRuntimeID: s.br.BlockRuntimeID(b),
+		NewBlockRuntimeID: blockNetworkID(s.br, b, s.conf.UseBlockNetworkIDHashes),
 		Flags:             packet.BlockUpdateNetwork,
 		Layer:             uint32(layer),
 	})
@@ -1271,7 +1278,7 @@ func (s *Session) ViewSlotChange(slot int, newItem item.Stack) {
 	s.writePacket(&packet.InventorySlot{
 		WindowID: s.openedWindowID.Load(),
 		Slot:     uint32(slot),
-		NewItem:  instanceFromItem(s.br, newItem),
+		NewItem:  instanceFromItem(s.br, newItem, s.conf.UseBlockNetworkIDHashes),
 	})
 }
 

@@ -7,6 +7,9 @@
   # Bedrock clients check the address they enter for a NetherNet signaling endpoint and use RakNet
   # otherwise, so RakNet (UDP) and NetherNet signaling (TCP) may share Address.
   Transport = ["raknet"]
+  # UseBlockNetworkIDHashes controls whether canonical block state hashes are used as block network IDs.
+  # When false, Dragonfly uses sequential runtime IDs as before.
+  UseBlockNetworkIDHashes = false
 
   [Network.NetherNet]
     # Address is the TCP address used for NetherNet HTTP signaling. If empty, Network.Address is used.
