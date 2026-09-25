@@ -11,8 +11,8 @@ import (
 )
 
 type (
-	// Encoding is an encoding type used for Chunk encoding. Implementations of this interface are DiskEncoding and
-	// NetworkEncoding, which can be used to encode a Chunk to an intermediate disk or network representation respectively.
+	// Encoding is an encoding type used for Chunk encoding. DiskEncoding writes chunks to disk, while
+	// NetworkEncoding and NetworkHashEncoding write them to the network with runtime IDs or block hashes.
 	Encoding interface {
 		encodePalette(buf *bytes.Buffer, p *Palette, e paletteEncoding)
 		decodePalette(buf *bytes.Buffer, blockSize paletteSize, e paletteEncoding) (*Palette, error)
@@ -30,7 +30,7 @@ var (
 	// DiskEncoding is the Encoding for writing a Chunk to disk. It writes block palettes using NBT and does not use
 	// varints.
 	DiskEncoding diskEncoding
-	// NetworkEncoding is the Encoding used for sending a Chunk over network. It does not use NBT and writes varints.
+	// NetworkEncoding writes network chunks using registry-local runtime IDs. It does not use NBT and writes varints.
 	NetworkEncoding networkEncoding
 	// NetworkHashEncoding is the Encoding used for sending a Chunk over network using canonical network block hashes
 	// in block palettes instead of registry-local runtime IDs.

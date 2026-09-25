@@ -171,8 +171,6 @@ type Config struct {
 	HandleStop func(*world.Tx, Controllable)
 	// BlockRegistry overrides the registry used for network serialization. If nil, world.DefaultBlockRegistry is used.
 	BlockRegistry world.BlockRegistry
-	// UseBlockNetworkIDHashes specifies whether canonical block state hashes are used as block network IDs.
-	UseBlockNetworkIDHashes bool
 }
 
 func (conf Config) New(conn Conn) *Session {
@@ -226,7 +224,7 @@ func (conf Config) New(conn Conn) *Session {
 
 	s.registerHandlers()
 	s.sendBiomes()
-	groups, items := creativeContent(s.br, conf.UseBlockNetworkIDHashes)
+	groups, items := creativeContent(s.br)
 	s.writePacket(&packet.CreativeContent{Groups: groups, Items: items})
 	s.sendRecipes()
 	s.sendArmourTrimData()
